@@ -1,0 +1,193 @@
+import Foundation
+import AppKit
+import MissionCore
+
+/// Everything the drawer shows, refreshed on timers.
+@MainActor
+final class DashboardModel: ObservableObject {
+    @Published var now = Date()
+    @Published var cpu: Double?
+    @Published var memory: Double?
+    @Published var battery: BatteryReading?
+    @Published var disk: DiskReading?
+    @Published var network: NetRate?
+    @Published var temperature: Double?
+    @Published var fan: Double?
+    @Published var thermal: ThermalLevel = .nominal
+    @Published var weather: WeatherNow?
+    @Published var nextEvent: CalendarItem?
+    @Published var calendarOff = false
+    /// False while the screens are asleep, so animations can stop.
+    @Published var screensAwake = true
+    @Published var focus = FocusTimer()
+    @Published private(set) var status: Status = .calm
+
+    let homeZone = TimeZone(identifier: "Asia/Brunei") ?? .current
+    let londonZone = TimeZone(identifier: "Europe/London") ?? TimeZone(secondsFromGMT: 0)!
+    /// Event times follow the Mac's own clock, like the Calendar app.
+    var eventZone = TimeZone.current
+
+    private var previousTicks: [CPUTicks] = []
+    private var previousNet: NetSample?
+    private var weatherRetryAt: Date?
+    private var cpuSmooth = Smoother(weight: 0.2)
+    private var smc: SMC?
+    private var timers: [Timer] = []
+    private let calendar = CalendarService()
+    private let weatherService = WeatherService()
+    private var tickCount = 0
+
+    /// Sample data used for screenshots, so they never show anything personal.
+    static func demo() -> DashboardModel {
+        let m = DashboardModel()
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = m.homeZone
+        m.now = cal.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 21, minute: 47)) ?? Date()
+        m.cpu = 0.23
+        m.memory = 0.61
+        m.battery = BatteryReading(level: 0.84, charging: true, onPower: true)
+        m.disk = DiskReading(free: 312_000_000_000, total: 994_000_000_000)
+        m.network = NetRate(down: 84_200_000, up: 12_600_000)
+        m.temperature = 48
+        m.fan = 1850
+        m.weather = WeatherNow(celsius: 29, code: 80, fetchedAt: m.now)
+        let runStart = cal.date(from: DateComponents(year: 2026, month: 11, day: 22, hour: 18, minute: 30)) ?? m.now
+        m.nextEvent = CalendarItem(title: "Evening Run", start: runStart,
+                                   end: runStart.addingTimeInterval(3600), isAllDay: false)
+        m.eventZone = m.homeZone
+        m.focus = FocusTimer()
+        m.focus.toggle(at: m.now.addingTimeInterval(-(25 * 60 - (18 * 60 + 42))))
+        m.recomputeStatus()
+        return m
+    }
+
+    func start() {
+        smc = SMC()
+        sampleFast()
+        sampleSlow()
+        calendar.onChange = { [weak self] in self?.refreshEvent() }
+        calendar.start()
+        refreshWeather()
+
+        let fast = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        fast.tolerance = 0.2
+        RunLoop.main.add(fast, forMode: .common)
+        timers.append(fast)
+
+        // Catch up straight after the Mac wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.previousNet = nil
+                self?.previousTicks = []
+                self?.sampleSlow()
+                self?.refreshWeather()
+                self?.refreshEvent()
+            }
+        }
+        // Stop animating while the displays sleep.
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.screensAwake = false }
+        }
+        ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.screensAwake = true }
+        }
+    }
+
+    /// Called every second by the window, so it can double-check the pointer.
+    var onTick: (() -> Void)?
+
+    private func tick() {
+        tickCount += 1
+        now = Date()
+        sampleFast()
+        if focus.tick(at: now) {
+            NSSound(named: "Glass")?.play()
+        }
+        if tickCount % 10 == 0 { sampleSlow() }
+        if tickCount % 300 == 0 { refreshEvent() }
+        if tickCount % (20 * 60) == 0 { refreshWeather() }
+        if let r = weatherRetryAt, now >= r { weatherRetryAt = nil; refreshWeather() }
+        if let w = weather, !Weather.isFresh(w, now: now) { weather = nil }
+        recomputeStatus()
+        onTick?()
+    }
+
+    private func sampleFast() {
+        let ticks = CPUSampler.read()
+        if let u = CPUMath.usage(previous: previousTicks, current: ticks) {
+            cpu = cpuSmooth.add(u)
+        }
+        previousTicks = ticks
+        memory = MemorySampler.read() ?? memory
+
+        let t = ProcessInfo.processInfo.systemUptime
+        if let c = NetworkSampler.read(now: t) {
+            if let p = previousNet, let r = NetworkMath.rate(previous: p, current: c) { network = r }
+            previousNet = c
+        }
+    }
+
+    private func sampleSlow() {
+        battery = BatterySampler.read()
+        disk = DiskSampler.read() ?? disk
+        thermal = ThermalSampler.read()
+        temperature = smc?.cpuTemperature()
+        fan = smc?.fanSpeed()
+    }
+
+    func refreshWeather() {
+        weatherService.refresh { [weak self] w in
+            guard let self else { return }
+            if let w {
+                self.weather = w
+            } else {
+                // Try again in a minute rather than waiting 20.
+                self.weatherRetryAt = Date().addingTimeInterval(60)
+            }
+        }
+    }
+
+    func refreshEvent() {
+        nextEvent = calendar.next(after: Date())
+        calendarOff = calendar.accessDenied
+    }
+
+    func toggleFocus() {
+        now = Date()
+        focus.toggle(at: now)
+        recomputeStatus()
+    }
+
+    func resetFocus() {
+        focus.reset()
+        recomputeStatus()
+    }
+
+    func recomputeStatus() {
+        status = StatusRules.evaluate(StatusInputs(
+            cpu: cpu, memory: memory,
+            batteryLevel: battery?.level, batteryCharging: battery?.charging ?? false,
+            diskFreeFraction: disk.map { DiskMath.freeFraction(free: $0.free, total: $0.total) },
+            thermal: thermal,
+            focusJustFinished: focus.justFinished(at: now)))
+    }
+
+    // MARK: Words for the drawer
+
+    var temperatureLine: String {
+        var parts: [String] = []
+        if let t = temperature { parts.append(Format.degrees(t)) } else { parts.append(thermal.word) }
+        if let f = fan, f > 0 { parts.append(Format.rpm(f)) }
+        return parts.joined(separator: " · ")
+    }
+
+    var batteryLine: String? {
+        guard let b = battery else { return nil }
+        let p = Format.percent(b.level)
+        if b.charging { return "\(p) charging" }
+        return p
+    }
+}
