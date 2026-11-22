@@ -535,4 +535,89 @@ final class ExtraCoreTests: XCTestCase {
         XCTAssertEqual(Format.countdown(100 * 60), "100:00")
         XCTAssertEqual(Format.countdown(0.2), "00:01", "never shows 00:00 early")
     }
+
+    // MARK: Month calendar
+
+    private func mondayCal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Brunei")!
+        c.locale = Locale(identifier: "en_GB")
+        c.firstWeekday = 2
+        return c
+    }
+
+    private func day(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 0, _ min: Int = 0, _ c: Calendar) -> Date {
+        c.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+    }
+
+    func testMonthGridStartsOnMondayAndPadsWithNeighbours() {
+        let c = mondayCal()
+        // 1 November 2026 is a Sunday, so the first row runs Mon 26 Oct to Sun 1 Nov.
+        let weeks = MonthGrid.weeks(for: day(2026, 11, 21, 21, 47, c), today: day(2026, 11, 21, 21, 47, c), calendar: c)
+        XCTAssertEqual(weeks.count, 6)
+        XCTAssertTrue(weeks.allSatisfy { $0.count == 7 })
+        XCTAssertEqual(weeks[0].map(\.day), [26, 27, 28, 29, 30, 31, 1])
+        XCTAssertEqual(weeks[0].map(\.inMonth), [false, false, false, false, false, false, true])
+        XCTAssertEqual(weeks[5].last?.day, 6, "pads to the end of the last week with December days")
+        let today = weeks.flatMap { $0 }.filter(\.isToday)
+        XCTAssertEqual(today.map(\.day), [21], "exactly one today")
+        XCTAssertEqual(weeks.flatMap { $0 }.filter(\.inMonth).count, 30)
+    }
+
+    func testMonthGridUsesOnlyTheRowsItNeeds() {
+        let c = mondayCal()
+        // February 2027 starts on a Monday and has 28 days: exactly four rows.
+        let weeks = MonthGrid.weeks(for: day(2027, 2, 10, 0, 0, c), today: day(2026, 11, 21, 0, 0, c), calendar: c)
+        XCTAssertEqual(weeks.count, 4)
+        XCTAssertEqual(weeks[0].first?.day, 1)
+        XCTAssertFalse(weeks.flatMap { $0 }.contains { $0.isToday }, "today isn't in another month")
+    }
+
+    func testMonthGridSundayFirstCalendar() {
+        var c = mondayCal()
+        c.firstWeekday = 1
+        let weeks = MonthGrid.weeks(for: day(2026, 11, 1, 0, 0, c), today: day(2026, 11, 1, 0, 0, c), calendar: c)
+        XCTAssertEqual(weeks[0].first?.day, 1, "1 Nov 2026 is a Sunday, so it opens the first row")
+        XCTAssertEqual(MonthGrid.weekdayInitials(calendar: c).first, "S")
+        XCTAssertEqual(MonthGrid.weekdayInitials(calendar: mondayCal()), ["M", "T", "W", "T", "F", "S", "S"])
+    }
+
+    func testMonthShiftAndTitleAcrossTheYear() {
+        let c = mondayCal()
+        let now = day(2026, 12, 31, 23, 30, c)
+        XCTAssertEqual(MonthGrid.title(MonthGrid.monthStart(of: now, offset: 1, calendar: c), calendar: c), "January 2027")
+        XCTAssertEqual(MonthGrid.title(MonthGrid.monthStart(of: now, offset: -12, calendar: c), calendar: c), "December 2025")
+        XCTAssertEqual(MonthGrid.monthStart(of: now, calendar: c), day(2026, 12, 1, 0, 0, c))
+    }
+
+    func testEventDaysCoverMultiDayEventsButNotMidnightEnds() {
+        let c = mondayCal()
+        let items = [
+            CalendarItem(title: "Run", start: day(2026, 11, 22, 18, 30, c), end: day(2026, 11, 22, 19, 30, c), isAllDay: false),
+            // All-day events end at midnight of the following day.
+            CalendarItem(title: "Trip", start: day(2026, 11, 25, 0, 0, c), end: day(2026, 11, 28, 0, 0, c), isAllDay: true),
+            CalendarItem(title: "Late", start: day(2026, 11, 29, 23, 0, c), end: day(2026, 11, 30, 1, 0, c), isAllDay: false),
+            CalendarItem(title: "Off", start: day(2026, 11, 10, 9, 0, c), end: day(2026, 11, 10, 10, 0, c), isAllDay: false, isCancelled: true),
+        ]
+        let days = MonthGrid.eventDays(items, from: day(2026, 10, 26, 0, 0, c), to: day(2026, 12, 7, 0, 0, c), calendar: c)
+        let expected: Set<Date> = [day(2026, 11, 22, 0, 0, c), day(2026, 11, 25, 0, 0, c), day(2026, 11, 26, 0, 0, c),
+                                   day(2026, 11, 27, 0, 0, c), day(2026, 11, 29, 0, 0, c), day(2026, 11, 30, 0, 0, c)]
+        XCTAssertEqual(days, expected)
+    }
+
+    func testEventDaysClipsLongEventsToTheWindow() {
+        let c = mondayCal()
+        // A three-year event still marks the shown month, and only that window.
+        let items = [CalendarItem(title: "Long", start: day(2024, 1, 1, 0, 0, c), end: day(2027, 1, 1, 0, 0, c), isAllDay: true)]
+        let days = MonthGrid.eventDays(items, from: day(2026, 11, 1, 0, 0, c), to: day(2026, 11, 4, 0, 0, c), calendar: c)
+        XCTAssertEqual(days, [day(2026, 11, 1, 0, 0, c), day(2026, 11, 2, 0, 0, c), day(2026, 11, 3, 0, 0, c)])
+    }
+
+    func testEventDaysHandlesZeroLengthAndBackwardsEvents() {
+        let c = mondayCal()
+        let t = day(2026, 11, 5, 12, 0, c)
+        let items = [CalendarItem(title: "Reminder", start: t, end: t, isAllDay: false),
+                     CalendarItem(title: "Odd", start: t, end: t.addingTimeInterval(-3600), isAllDay: false)]
+        XCTAssertEqual(MonthGrid.eventDays(items, from: day(2026, 11, 1, 0, 0, c), to: day(2026, 12, 1, 0, 0, c), calendar: c), [day(2026, 11, 5, 0, 0, c)])
+    }
 }

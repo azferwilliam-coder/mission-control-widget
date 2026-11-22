@@ -46,6 +46,16 @@ final class CalendarService {
         }
         return NextEventRule.pick(items, now: now)
     }
+
+    /// Every event overlapping the given span, for the month calendar's dots.
+    func events(from start: Date, to end: Date) -> [CalendarItem] {
+        guard authorised, end > start else { return [] }
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        return store.events(matching: predicate).map {
+            CalendarItem(title: "", start: $0.startDate, end: $0.endDate,
+                         isAllDay: $0.isAllDay, isCancelled: $0.status == .canceled)
+        }
+    }
 }
 
 /// Current weather for Bandar Seri Begawan from Open-Meteo (free, no account).

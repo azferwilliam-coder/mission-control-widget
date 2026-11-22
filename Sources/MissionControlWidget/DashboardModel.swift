@@ -17,6 +17,10 @@ final class DashboardModel: ObservableObject {
     @Published var weather: WeatherNow?
     @Published var nextEvent: CalendarItem?
     @Published var calendarOff = false
+    /// Which month the drawer's calendar shows: 0 = this month, -1 = last month, and so on.
+    @Published var monthOffset = 0
+    /// Midnights of days in the shown month (and its edges) that have events.
+    @Published var eventDays: Set<Date> = []
     /// False while the screens are asleep, so animations can stop.
     @Published var screensAwake = true
     @Published var focus = FocusTimer()
@@ -25,7 +29,20 @@ final class DashboardModel: ObservableObject {
     let homeZone = TimeZone(identifier: "Asia/Brunei") ?? .current
     let londonZone = TimeZone(identifier: "Europe/London") ?? TimeZone(secondsFromGMT: 0)!
     /// Event times follow the Mac's own clock, like the Calendar app.
-    var eventZone = TimeZone.current
+    var eventZone = TimeZone.current { didSet { gridCalendar = Self.makeGridCalendar(eventZone) } }
+
+    /// The calendar used for the month grid: the Mac's own time zone and first day of the week.
+    private(set) var gridCalendar = DashboardModel.makeGridCalendar(.current)
+
+    nonisolated private static func makeGridCalendar(_ zone: TimeZone) -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = zone
+        c.locale = Locale(identifier: "en_GB")
+        c.firstWeekday = Calendar.autoupdatingCurrent.firstWeekday
+        return c
+    }
+    var shownMonth: Date { MonthGrid.monthStart(of: now, offset: monthOffset, calendar: gridCalendar) }
+    private var eventDaysKey: Date?
 
     private var previousTicks: [CPUTicks] = []
     private var previousNet: NetSample?
@@ -55,6 +72,9 @@ final class DashboardModel: ObservableObject {
         m.nextEvent = CalendarItem(title: "Evening Run", start: runStart,
                                    end: runStart.addingTimeInterval(3600), isAllDay: false)
         m.eventZone = m.homeZone
+        m.eventDays = [3, 9, 14, 22, 25, 26, 28].compactMap {
+            cal.date(from: DateComponents(year: 2026, month: 11, day: $0))
+        }.reduce(into: Set<Date>()) { $0.insert($1) }
         m.focus = FocusTimer()
         m.focus.toggle(at: m.now.addingTimeInterval(-(25 * 60 - (18 * 60 + 42))))
         m.recomputeStatus()
@@ -107,7 +127,7 @@ final class DashboardModel: ObservableObject {
             NSSound(named: "Glass")?.play()
         }
         if tickCount % 10 == 0 { sampleSlow() }
-        if tickCount % 300 == 0 { refreshEvent() }
+        if tickCount % 300 == 0 { refreshEvent() } else if eventDaysKey != shownMonth { refreshEventDays() }
         if tickCount % (20 * 60) == 0 { refreshWeather() }
         if let r = weatherRetryAt, now >= r { weatherRetryAt = nil; refreshWeather() }
         if let w = weather, !Weather.isFresh(w, now: now) { weather = nil }
@@ -153,6 +173,23 @@ final class DashboardModel: ObservableObject {
     func refreshEvent() {
         nextEvent = calendar.next(after: Date())
         calendarOff = calendar.accessDenied
+        refreshEventDays()
+    }
+
+    /// Reloads the dots for the month on show, covering the greyed days either side too.
+    func refreshEventDays() {
+        let c = gridCalendar
+        let weeks = MonthGrid.weeks(for: shownMonth, today: now, calendar: c)
+        guard let first = weeks.first?.first?.date, let lastDay = weeks.last?.last?.date,
+              let end = c.date(byAdding: .day, value: 1, to: lastDay) else { return }
+        eventDays = MonthGrid.eventDays(calendar.events(from: first, to: end), from: first, to: end, calendar: c)
+        eventDaysKey = shownMonth
+    }
+
+    func showMonth(offset: Int) {
+        monthOffset = max(-120, min(120, offset))
+        now = Date()
+        refreshEventDays()
     }
 
     func toggleFocus() {

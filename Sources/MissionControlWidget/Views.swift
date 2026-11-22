@@ -349,6 +349,8 @@ struct DrawerPanelView: View {
                 StatRow(label: "Temperature", value: model.temperatureLine)
             }
             Divider().overlay(Dusk.hairline)
+            MonthCalendar(model: model)
+            Divider().overlay(Dusk.hairline)
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     SectionLabel(text: "Next event")
@@ -418,6 +420,91 @@ struct DrawerPanelView: View {
     }
 }
 
+/// A small month calendar: today ringed in amber, a dot under days with events,
+/// and arrows to look at other months (the month name brings you back to today).
+struct MonthCalendar: View {
+    @ObservedObject var model: DashboardModel
+
+    var body: some View {
+        let cal = model.gridCalendar
+        let month = model.shownMonth
+        let weeks = MonthGrid.weeks(for: month, today: model.now, calendar: cal)
+        let title = MonthGrid.title(month, calendar: cal)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 2) {
+                Button { model.showMonth(offset: 0) } label: {
+                    SectionLabel(text: title)
+                        .frame(minHeight: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.monthOffset == 0 ? "This month" : "Back to this month")
+                .accessibilityLabel(title)
+                .accessibilityHint(model.monthOffset == 0 ? "" : "Shows this month again")
+                Spacer(minLength: 8)
+                arrow("chevron.left", label: "Previous month") { model.showMonth(offset: model.monthOffset - 1) }
+                arrow("chevron.right", label: "Next month") { model.showMonth(offset: model.monthOffset + 1) }
+            }
+            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(MonthGrid.weekdayInitials(calendar: cal).enumerated()), id: \.offset) { _, letter in
+                        Text(letter)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Dusk.faint)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 2)
+                    }
+                }
+                ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                    GridRow {
+                        ForEach(week, id: \.date) { day in
+                            DayCell(day: day, hasEvents: model.eventDays.contains(day.date))
+                        }
+                    }
+                }
+            }
+            .duskTextShadow()
+        }
+    }
+
+    private func arrow(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Dusk.muted)
+                .frame(width: 24, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+struct DayCell: View {
+    var day: MonthDay
+    var hasEvents: Bool
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("\(day.day)")
+                .font(.system(size: 11, weight: day.isToday ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(day.isToday ? Dusk.amber : (day.inMonth ? Dusk.value : Dusk.faint.opacity(0.55)))
+                .frame(width: 22, height: 17)
+                .background {
+                    if day.isToday {
+                        Circle().stroke(Dusk.amber.opacity(0.85), lineWidth: 1).frame(width: 19, height: 19)
+                    }
+                }
+            Circle()
+                .fill(hasEvents ? (day.inMonth ? Dusk.amber : Dusk.amberDim.opacity(0.5)) : Color.clear)
+                .frame(width: 3, height: 3)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(day.day)\(day.isToday ? ", today" : "")\(hasEvents ? ", has events" : "")")
+    }
+}
+
 /// What the panel shows: the tab, or the drawer sliding out over it.
 struct RootView: View {
     @ObservedObject var model: DashboardModel
@@ -438,7 +525,16 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { loginOn = LoginItem.isOn }
-        .onChange(of: drawer.showDrawer) { loginOn = LoginItem.isOn }
+        .onChange(of: drawer.showDrawer) {
+            loginOn = LoginItem.isOn
+            // Tucking the drawer away brings the calendar back to this month for next time.
+            // Waits for the slide-out to finish, so the grid doesn't change shape mid-animation.
+            if !drawer.showDrawer, model.monthOffset != 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if !drawer.showDrawer { model.showMonth(offset: 0) }
+                }
+            }
+        }
         .onPreferenceChange(DrawerHeightKey.self) { h in
             Task { @MainActor in drawer.drawerHeightChanged(h) }
         }

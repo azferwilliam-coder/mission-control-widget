@@ -192,7 +192,9 @@ final class DrawerController: ObservableObject {
         guard let window else { return }
         let screen = NSScreen.screens.first ?? NSScreen.main
         guard let vf = screen?.visibleFrame else { return }
-        let frame = NSRect(x: vf.minX, y: vf.maxY - Dusk.topGap - size.height, width: size.width, height: size.height)
+        // Never taller than the space under the menu bar, so the bottom never hides under the Dock.
+        let h = min(size.height, max(Dusk.tabHeight, vf.height - Dusk.topGap))
+        let frame = NSRect(x: vf.minX, y: vf.maxY - Dusk.topGap - h, width: size.width, height: h)
         window.setFrame(frame, display: true)
         window.invalidateShadow()
     }

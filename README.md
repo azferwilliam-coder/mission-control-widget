@@ -7,7 +7,9 @@ A slim drawer that lives on the top-left edge of your Mac's screen (design: "Amb
   (low battery, nearly full disk, running hot, memory full, working hard, focus session done).
 - **Revealed:** move the pointer onto the tab and the drawer slides out: a live pulse line of how
   busy the Mac is, the date and Bandar Seri Begawan weather, CPU, memory, battery, free disk,
-  network speed, temperature and fan, your next calendar event, and a 25-minute focus timer.
+  network speed, temperature and fan, a month calendar (today ringed in amber, a dot under days
+  with events, arrows to see other months; click the month name to come back), your next calendar
+  event, and a 25-minute focus timer.
   Move away and it tucks back in. To keep it open, right-click it and choose Pin Drawer Open (choose Unpin Drawer to let it tuck away again). It sits on the desktop behind your windows; right-click and choose Always on Top to keep it in front of everything.
 - **Right-click** for: start, pause or reset the focus timer, keep the drawer open, refresh,
   Open at Login, Quit.
@@ -29,7 +31,8 @@ bash scripts/make-app.sh --snapshots shots   # review pictures with sample data
 
 ## Privacy
 
-- Calendar: only reads your next event, never changes anything. macOS asks first.
+- Calendar: only reads your events (the next one, and which days have events for the month view),
+  never changes anything. macOS asks first.
 - Weather: asks Open-Meteo (free, no account) for Bandar Seri Begawan's current weather.
   Only that place's coordinates are sent.
 - Nothing else leaves your Mac.

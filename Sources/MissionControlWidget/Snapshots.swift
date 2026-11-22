@@ -33,7 +33,7 @@ enum Snapshots {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(16)
             }
-            .frame(width: open ? 452 : 300, height: 760)
+            .frame(width: open ? 452 : 300, height: 860)
             .clipped()
         }
     }
