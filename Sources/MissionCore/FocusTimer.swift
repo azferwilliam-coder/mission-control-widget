@@ -71,3 +71,30 @@ public struct FocusTimer: Equatable, Sendable {
         }
     }
 }
+
+/// The message the widget sends to other apps (Horizon Strip) whenever the focus timer changes.
+public enum FocusBroadcast {
+    public static let name = "com.azferwilliam.missioncontrol.focus"
+    /// Another app asking for the current state (for example when it has just opened).
+    public static let request = "com.azferwilliam.horizonstrip.focusRequest"
+
+    /// Plain numbers and words only, so any app can read it.
+    public static func payload(_ timer: FocusTimer, now: Date) -> [String: Any] {
+        var p: [String: Any] = ["duration": timer.duration]
+        switch timer.state {
+        case .idle:
+            p["state"] = "idle"
+        case .running(let end):
+            p["state"] = "running"
+            p["endsAt"] = end.timeIntervalSince1970
+            p["remaining"] = max(0, end.timeIntervalSince(now))
+        case .paused(let r):
+            p["state"] = "paused"
+            p["remaining"] = r
+        case .finished(let at):
+            p["state"] = "finished"
+            p["finishedAt"] = at.timeIntervalSince1970
+        }
+        return p
+    }
+}
