@@ -87,6 +87,10 @@ final class DashboardModel: ObservableObject {
         sampleSlow()
         calendar.onChange = { [weak self] in self?.refreshEvent() }
         calendar.start()
+        // Horizon Strip asks for the focus timer when it opens.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name(FocusBroadcast.request), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.broadcastFocus() }
+        }
         refreshWeather()
 
         let fast = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -125,6 +129,10 @@ final class DashboardModel: ObservableObject {
         sampleFast()
         if focus.tick(at: now) {
             NSSound(named: "Glass")?.play()
+            broadcastFocus()
+        } else if focus.isRunning, tickCount % 60 == 0 {
+            // Once a minute while running, in case Horizon Strip missed the start.
+            broadcastFocus()
         }
         if tickCount % 10 == 0 { sampleSlow() }
         if tickCount % 300 == 0 { refreshEvent() } else if eventDaysKey != shownMonth { refreshEventDays() }
@@ -196,11 +204,20 @@ final class DashboardModel: ObservableObject {
         now = Date()
         focus.toggle(at: now)
         recomputeStatus()
+        broadcastFocus()
     }
 
     func resetFocus() {
         focus.reset()
         recomputeStatus()
+        broadcastFocus()
+    }
+
+    /// Tells other apps (Horizon Strip) about the focus timer, so they can show it too.
+    func broadcastFocus() {
+        DistributedNotificationCenter.default().postNotificationName(Notification.Name(FocusBroadcast.name), object: nil,
+                                                                     userInfo: FocusBroadcast.payload(focus, now: Date()),
+                                                                     deliverImmediately: true)
     }
 
     func recomputeStatus() {
