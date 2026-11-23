@@ -397,17 +397,26 @@ struct DrawerPanelView: View {
     }
 
     var header: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 StatusDot(attention: model.status.needsAttention, animate: animate)
-                Text("\(Format.clock(model.now, timeZone: model.homeZone)) BRUNEI")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .duskTextShadow()
+                    .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4 }
+                Text(Format.clock(model.now, timeZone: model.homeZone))
+                    .font(Self.timeFont)
+                    .foregroundStyle(Dusk.text)
+                    .tracking(0.6)
+                Text("BRUNEI")
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .duskTextShadow()
             Spacer(minLength: 4)
-            HStack(spacing: 4) {
-                Text(Format.clock(model.now, timeZone: model.londonZone)).foregroundStyle(Dusk.amber).fontWeight(.medium)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Format.clock(model.now, timeZone: model.londonZone))
+                    .font(Self.timeFont)
+                    .fontWeight(.regular)
+                    .foregroundStyle(Dusk.amber)
+                    .tracking(0.6)
                 Text("LONDON")
             }
             .lineLimit(1)
@@ -418,6 +427,9 @@ struct DrawerPanelView: View {
         .tracking(1.4)
         .foregroundStyle(Dusk.muted)
     }
+
+    /// The header times: larger and light, like the tab's digits; the city names stay small.
+    static let timeFont = Font.system(size: 16, weight: .light).monospacedDigit()
 }
 
 /// A small month calendar: today ringed in amber, a dot under days with events,
