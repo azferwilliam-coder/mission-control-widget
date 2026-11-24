@@ -68,6 +68,8 @@ enum Snapshots {
         bare.fan = nil
         bare.temperature = nil
         bare.nextEvent = nil
+        bare.calendarOff = true
+        bare.eventDays = []
         bare.weather = nil
         bare.focus = FocusTimer()
         bare.recomputeStatus()

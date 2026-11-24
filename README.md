@@ -11,12 +11,13 @@ A slim drawer that lives on the top-left edge of your Mac's screen (design: "Amb
   with events, arrows to see other months; click the month name to come back), your next calendar
   event, and a 25-minute focus timer.
   Move away and it tucks back in. To keep it open, right-click it and choose Pin Drawer Open (choose Unpin Drawer to let it tuck away again). It sits on the desktop behind your windows; right-click and choose Always on Top to keep it in front of everything.
-- **Right-click** for: start, pause or reset the focus timer, keep the drawer open, refresh,
-  Open at Login, Quit.
+- **Right-click** for: start, pause or reset the focus timer, Pin Drawer Open, Always on Top
+  (also above full-screen apps), Clear Glass (macOS 26: see-through like the Dock instead of
+  frosted), Refresh, Open at Login, Quit.
 
 ## Build and install
 
-Needs Xcode. In Terminal, from this folder:
+Needs Xcode 26 (for the macOS 26 Liquid Glass look). In Terminal, from this folder:
 
 ```
 bash scripts/make-app.sh --install

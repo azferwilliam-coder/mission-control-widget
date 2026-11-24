@@ -73,6 +73,8 @@ final class DrawerController: ObservableObject {
 
     private let model: DashboardModel
     private var window: DrawerWindow?
+    /// True while the right-click menu is open, so the drawer doesn't tuck away behind it.
+    private var menuOpen = false
     private var host: HoverHostingView<RootView>?
 
     init(model: DashboardModel) {
@@ -84,13 +86,36 @@ final class DrawerController: ObservableObject {
         let h = HoverHostingView(rootView: RootView(model: model, drawer: self))
         h.sizingOptions = []   // the controller decides the window size, not SwiftUI
         h.onEnter = { [weak self] in self?.handle { $0.pointerEntered() } }
-        h.onExit = { [weak self] in self?.handle { $0.pointerExited() } }
+        h.onExit = { [weak self] in
+            guard let self, !self.menuOpen else { return }
+            self.handle { $0.pointerExited() }
+        }
         w.contentView = h
         window = w
         host = h
         place(size: CGSize(width: Dusk.tabWidth, height: Dusk.tabHeight))
         applyLevel()
 
+        // Pause the animations while the widget is hidden behind other windows (saves battery).
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let win = self.window else { return }
+                self.model.widgetVisible = win.occlusionState.contains(.visible)
+            }
+        }
+        // The right-click menu is its own window; while it's open, leave the drawer exactly as it is.
+        // Set straight away (these arrive on the main thread), so a pointer exit can't slip in first.
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.menuOpen = true }
+        }
+        NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.menuOpen = false
+                self?.reconcilePointer()
+            }
+            // Check again once the menu has finished fading, in case it was still under the pointer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.reconcilePointer() }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.reposition() }
         }
@@ -115,6 +140,7 @@ final class DrawerController: ObservableObject {
     }
 
     func reconcilePointer() {
+        guard !menuOpen else { return }
         handle { $0.reconcile(pointerIsInside: pointerIsInside()) }
     }
 
@@ -137,6 +163,10 @@ final class DrawerController: ObservableObject {
         // isFloatingPanel resets the level as a side effect, so set it first and the real level after.
         window.isFloatingPanel = alwaysOnTop
         window.level = alwaysOnTop ? .floating : DrawerWindow.desktopLevel
+        // On top also means on top of full-screen apps.
+        var behaviour: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        if alwaysOnTop { behaviour.insert(.fullScreenAuxiliary) }
+        window.collectionBehavior = behaviour
         window.orderFrontRegardless()
         reconcilePointer()
     }
@@ -162,7 +192,8 @@ final class DrawerController: ObservableObject {
         case .scheduleCollapse(let delay):
             let g = logic.generation
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.handle { $0.collapseTimerFired(generation: g) }
+                guard let self, !self.menuOpen else { return }
+                self.handle { $0.collapseTimerFired(generation: g) }
             }
         case .collapse:
             withAnimation(.easeIn(duration: 0.22)) { showDrawer = false }

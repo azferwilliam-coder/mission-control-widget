@@ -23,6 +23,9 @@ final class DashboardModel: ObservableObject {
     @Published var eventDays: Set<Date> = []
     /// False while the screens are asleep, so animations can stop.
     @Published var screensAwake = true
+    /// False while the widget is completely covered by other windows, so animations can stop too.
+    @Published var widgetVisible = true
+    var shouldAnimate: Bool { screensAwake && widgetVisible }
     @Published var focus = FocusTimer()
     @Published private(set) var status: Status = .calm
 
@@ -106,6 +109,14 @@ final class DashboardModel: ObservableObject {
                 self?.refreshEvent()
             }
         }
+        // Follow the Mac's time zone when it changes (travelling), for event times and the calendar.
+        NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.eventZone = .current
+                self?.now = Date()
+                self?.refreshEvent()
+            }
+        }
         // Stop animating while the displays sleep.
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -123,11 +134,14 @@ final class DashboardModel: ObservableObject {
         tickCount += 1
         now = Date()
         sampleFast()
-        if focus.tick(at: now) {
+        // Only chime if it finished just now, not if it ran out while the Mac was asleep.
+        if focus.tick(at: now), focus.justFinished(at: now) {
             NSSound(named: "Glass")?.play()
         }
         if tickCount % 10 == 0 { sampleSlow() }
         if tickCount % 300 == 0 { refreshEvent() } else if eventDaysKey != shownMonth { refreshEventDays() }
+        // Move on as soon as the shown event ends, rather than at the next five-minute check.
+        if let e = nextEvent, now >= e.end { refreshEvent() }
         if tickCount % (20 * 60) == 0 { refreshWeather() }
         if let r = weatherRetryAt, now >= r { weatherRetryAt = nil; refreshWeather() }
         if let w = weather, !Weather.isFresh(w, now: now) { weather = nil }

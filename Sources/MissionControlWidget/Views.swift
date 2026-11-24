@@ -39,7 +39,8 @@ struct GlassBackground: View {
 
     var body: some View {
         let shape = TabShape(radius: radius)
-        if clearGlass || Dusk.snapshotClear {
+        // Review pictures ignore your own Clear Glass setting, so each one shows the look it's meant to.
+        if Dusk.snapshotMode ? Dusk.snapshotClear : clearGlass {
             CrystalGlass(radius: radius)
         } else if Dusk.snapshotMode {
             shape.fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.07)],
@@ -92,7 +93,7 @@ struct DuskTextShadow: ViewModifier {
     @AppStorage("clearGlass") private var clearGlass = false
 
     func body(content: Content) -> some View {
-        let clear = clearGlass || Dusk.snapshotClear
+        let clear = Dusk.snapshotMode ? Dusk.snapshotClear : clearGlass
         content
             .shadow(color: Color.black.opacity(clear ? 0.55 : 0.4), radius: clear ? 1.5 : 1, y: 1)
             .shadow(color: Color.black.opacity(clear ? 0.35 : 0), radius: clear ? 4 : 0)
@@ -414,7 +415,6 @@ struct DrawerPanelView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(Format.clock(model.now, timeZone: model.londonZone))
                     .font(Self.timeFont)
-                    .fontWeight(.regular)
                     .foregroundStyle(Dusk.amber)
                     .tracking(0.6)
                 Text("LONDON")
@@ -527,10 +527,10 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            TabStrip(model: model, animate: model.screensAwake && !drawer.showDrawer, glass: !drawer.showDrawer)
+            TabStrip(model: model, animate: model.shouldAnimate && !drawer.showDrawer, glass: !drawer.showDrawer)
                 .opacity(drawer.showDrawer ? 0 : 1)
             if drawer.showDrawer {
-                DrawerPanelView(model: model, animate: model.screensAwake)
+                DrawerPanelView(model: model, animate: model.shouldAnimate)
                     .transition(.move(edge: .leading))
                     .zIndex(1)
             }
