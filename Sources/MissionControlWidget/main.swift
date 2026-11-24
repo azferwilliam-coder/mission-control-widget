@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var drawer = DrawerController(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = ThemeLive.shared
         model.start()
         drawer.install()
     }

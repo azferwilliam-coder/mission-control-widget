@@ -25,9 +25,12 @@ public struct StatusInputs: Sendable {
     public var diskFreeFraction: Double?
     public var thermal: ThermalLevel
     public var focusJustFinished: Bool
+    /// The name of a Bluetooth device (mouse, keyboard, AirPods) at 20% or less, if any.
+    public var lowDevice: String?
 
     public init(cpu: Double? = nil, memory: Double? = nil, batteryLevel: Double? = nil, batteryCharging: Bool = false,
-                diskFreeFraction: Double? = nil, thermal: ThermalLevel = .nominal, focusJustFinished: Bool = false) {
+                diskFreeFraction: Double? = nil, thermal: ThermalLevel = .nominal, focusJustFinished: Bool = false,
+                lowDevice: String? = nil) {
         self.cpu = cpu
         self.memory = memory
         self.batteryLevel = batteryLevel
@@ -35,6 +38,7 @@ public struct StatusInputs: Sendable {
         self.diskFreeFraction = diskFreeFraction
         self.thermal = thermal
         self.focusJustFinished = focusJustFinished
+        self.lowDevice = lowDevice
     }
 }
 
@@ -65,6 +69,7 @@ public enum StatusRules {
         if let b = i.batteryLevel, b <= lowBattery, !i.batteryCharging { return .attention("Battery low") }
         if let d = i.diskFreeFraction, d < lowDisk { return .attention("Disk nearly full") }
         if i.focusJustFinished { return .attention("Focus done") }
+        if let name = i.lowDevice { return .attention("\(name) battery low") }
         if let m = i.memory, m >= fullMemory { return .attention("Memory full") }
         if let c = i.cpu, c >= busyCPU { return .attention("Working hard") }
         return .calm

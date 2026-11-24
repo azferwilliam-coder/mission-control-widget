@@ -56,8 +56,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Sign it just for this Mac (no Apple account needed).
-codesign --force --sign - "$APP"
+# Sign with Azfer's own certificate when it is in the keychain, so macOS keeps
+# permissions (Accessibility, Files and Folders) across updates. If it is missing,
+# sign just for this Mac as before.
+SIGN_ID="${SIGN_IDENTITY:-Azfer William}"
+if ! security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\""; then
+  echo "note: certificate \"$SIGN_ID\" not found, signing just for this Mac" >&2
+  SIGN_ID="-"
+fi
+sign_it() {
+  codesign --force --sign "$SIGN_ID" "$@" && return 0
+  [ "$SIGN_ID" = "-" ] && return 1
+  echo "warning: signing as \"$SIGN_ID\" failed, signing just for this Mac" >&2
+  codesign --force --sign - "$@"
+}
+sign_it "$APP"
 echo "Built: $APP"
 
 case "${1:-}" in

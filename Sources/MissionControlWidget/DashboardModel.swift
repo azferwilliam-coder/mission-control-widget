@@ -9,6 +9,8 @@ final class DashboardModel: ObservableObject {
     @Published var cpu: Double?
     @Published var memory: Double?
     @Published var battery: BatteryReading?
+    /// The rings at the bottom of the drawer: this Mac and connected Bluetooth devices.
+    @Published var devices: [DeviceBattery] = []
     @Published var disk: DiskReading?
     @Published var network: NetRate?
     @Published var temperature: Double?
@@ -23,6 +25,9 @@ final class DashboardModel: ObservableObject {
     @Published var eventDays: Set<Date> = []
     /// False while the screens are asleep, so animations can stop.
     @Published var screensAwake = true
+    /// False while the widget is completely covered by other windows, so animations can stop too.
+    @Published var widgetVisible = true
+    var shouldAnimate: Bool { screensAwake && widgetVisible }
     @Published var focus = FocusTimer()
     @Published private(set) var status: Status = .calm
 
@@ -53,6 +58,14 @@ final class DashboardModel: ObservableObject {
     private let calendar = CalendarService()
     private let weatherService = WeatherService()
     private var tickCount = 0
+    private var registryDevices: [DeviceBattery] = []
+    private var profilerDevices: [DeviceBattery] = []
+    private var profilerAt: Date?
+    private var profilerFailures = 0
+    /// Set by the window while the drawer is open, so AirPods are checked more often then.
+    var drawerOpen = false {
+        didSet { if drawerOpen && !oldValue { refreshAccessories(force: false) } }
+    }
 
     /// Sample data used for screenshots, so they never show anything personal.
     static func demo() -> DashboardModel {
@@ -75,6 +88,12 @@ final class DashboardModel: ObservableObject {
         m.eventDays = [3, 9, 14, 22, 25, 26, 28].compactMap {
             cal.date(from: DateComponents(year: 2026, month: 11, day: $0))
         }.reduce(into: Set<Date>()) { $0.insert($1) }
+        m.registryDevices = [DeviceBattery(name: "Magic Mouse", kind: .mouse, level: 0.62),
+                             DeviceBattery(name: "Magic Keyboard", kind: .keyboard, level: 0.91)]
+        m.profilerDevices = [DeviceBattery(name: "AirPods Pro", kind: .headphones, level: 0.70,
+                                           parts: [BatteryPart(label: "Left", level: 0.72), BatteryPart(label: "Right", level: 0.70),
+                                                   BatteryPart(label: "Case", level: 0.45)])]
+        m.rebuildDevices()
         m.focus = FocusTimer()
         m.focus.toggle(at: m.now.addingTimeInterval(-(25 * 60 - (18 * 60 + 42))))
         m.recomputeStatus()
@@ -85,8 +104,13 @@ final class DashboardModel: ObservableObject {
         smc = SMC()
         sampleFast()
         sampleSlow()
+        refreshAccessories(force: true)
         calendar.onChange = { [weak self] in self?.refreshEvent() }
         calendar.start()
+        // Horizon Strip asks for the focus timer when it opens.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name(FocusBroadcast.request), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.broadcastFocus() }
+        }
         refreshWeather()
 
         let fast = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -102,7 +126,16 @@ final class DashboardModel: ObservableObject {
                 self?.previousNet = nil
                 self?.previousTicks = []
                 self?.sampleSlow()
+                self?.refreshAccessories(force: true)
                 self?.refreshWeather()
+                self?.refreshEvent()
+            }
+        }
+        // Follow the Mac's time zone when it changes (travelling), for event times and the calendar.
+        NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.eventZone = .current
+                self?.now = Date()
                 self?.refreshEvent()
             }
         }
@@ -123,11 +156,19 @@ final class DashboardModel: ObservableObject {
         tickCount += 1
         now = Date()
         sampleFast()
-        if focus.tick(at: now) {
+        // Only chime if it finished just now, not if it ran out while the Mac was asleep.
+        if focus.tick(at: now), focus.justFinished(at: now) {
             NSSound(named: "Glass")?.play()
+            broadcastFocus()
+        } else if focus.isRunning, tickCount % 60 == 0 {
+            // Once a minute while running, in case Horizon Strip missed the start.
+            broadcastFocus()
         }
         if tickCount % 10 == 0 { sampleSlow() }
+        if tickCount % 30 == 0, screensAwake { refreshAccessories(force: false) }
         if tickCount % 300 == 0 { refreshEvent() } else if eventDaysKey != shownMonth { refreshEventDays() }
+        // Move on as soon as the shown event ends, rather than at the next five-minute check.
+        if let e = nextEvent, now >= e.end { refreshEvent() }
         if tickCount % (20 * 60) == 0 { refreshWeather() }
         if let r = weatherRetryAt, now >= r { weatherRetryAt = nil; refreshWeather() }
         if let w = weather, !Weather.isFresh(w, now: now) { weather = nil }
@@ -156,6 +197,47 @@ final class DashboardModel: ObservableObject {
         thermal = ThermalSampler.read()
         temperature = smc?.cpuTemperature()
         fan = smc?.fanSpeed()
+        rebuildDevices()
+    }
+
+    /// Magic accessories every call (cheap); AirPods through System Information only every
+    /// 2 minutes, or every 30 seconds while the drawer is open.
+    func refreshAccessories(force: Bool) {
+        registryDevices = AccessorySampler.readRegistry()
+        rebuildDevices()
+        let gap: TimeInterval = drawerOpen ? 25 : 115  // a little under 30 s / 2 min, so the 30-second tick never just misses it
+        if !force, let last = profilerAt, Date().timeIntervalSince(last) < gap { return }
+        profilerAt = Date()
+        AccessorySampler.readProfiler { [weak self] found in
+            guard let self else { return }
+            if let found {
+                self.profilerFailures = 0
+                self.profilerDevices = found
+            } else {
+                // A failed check keeps the last rings, but not for ever: after three in a row they go.
+                self.profilerFailures += 1
+                guard self.profilerFailures >= 3 else { return }
+                self.profilerDevices = []
+            }
+            self.rebuildDevices()
+        }
+    }
+
+    func clearAccessoriesForSnapshot() {
+        registryDevices = []
+        profilerDevices = []
+    }
+
+    func setMouseLevelForSnapshot(_ level: Double) {
+        registryDevices = registryDevices.map { $0.kind == .mouse ? DeviceBattery(name: $0.name, kind: .mouse, level: level) : $0 }
+        rebuildDevices()
+    }
+
+    func rebuildDevices() {
+        let mac = battery.map { DeviceBattery(name: "This Mac", kind: .mac, level: $0.level, charging: $0.charging) }
+        let list = BatteryRules.combine(mac: mac, registry: registryDevices, profiler: profilerDevices)
+        if list != devices { devices = list }
+        recomputeStatus()
     }
 
     func refreshWeather() {
@@ -196,11 +278,20 @@ final class DashboardModel: ObservableObject {
         now = Date()
         focus.toggle(at: now)
         recomputeStatus()
+        broadcastFocus()
     }
 
     func resetFocus() {
         focus.reset()
         recomputeStatus()
+        broadcastFocus()
+    }
+
+    /// Tells other apps (Horizon Strip) about the focus timer, so they can show it too.
+    func broadcastFocus() {
+        DistributedNotificationCenter.default().postNotificationName(Notification.Name(FocusBroadcast.name), object: nil,
+                                                                     userInfo: FocusBroadcast.payload(focus, now: Date()),
+                                                                     deliverImmediately: true)
     }
 
     func recomputeStatus() {
@@ -209,7 +300,8 @@ final class DashboardModel: ObservableObject {
             batteryLevel: battery?.level, batteryCharging: battery?.charging ?? false,
             diskFreeFraction: disk.map { DiskMath.freeFraction(free: $0.free, total: $0.total) },
             thermal: thermal,
-            focusJustFinished: focus.justFinished(at: now)))
+            focusJustFinished: focus.justFinished(at: now),
+            lowDevice: BatteryRules.lowestAccessory(devices)?.name))
     }
 
     // MARK: Words for the drawer
@@ -219,12 +311,5 @@ final class DashboardModel: ObservableObject {
         if let t = temperature { parts.append(Format.degrees(t)) } else { parts.append(thermal.word) }
         if let f = fan, f > 0 { parts.append(Format.rpm(f)) }
         return parts.joined(separator: " · ")
-    }
-
-    var batteryLine: String? {
-        guard let b = battery else { return nil }
-        let p = Format.percent(b.level)
-        if b.charging { return "\(p) charging" }
-        return p
     }
 }

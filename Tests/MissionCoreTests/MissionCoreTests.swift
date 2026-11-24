@@ -230,6 +230,26 @@ final class FocusTimerTests: XCTestCase {
     func testMinimumDuration() {
         XCTAssertEqual(FocusTimer(duration: 5).duration, 60)
     }
+
+    func testBroadcastPayloadForHorizonStrip() {
+        var f = FocusTimer(duration: 1500)
+        XCTAssertEqual(FocusBroadcast.payload(f, now: t0)["state"] as? String, "idle")
+        f.toggle(at: t0)
+        let running = FocusBroadcast.payload(f, now: t0.addingTimeInterval(100))
+        XCTAssertEqual(running["state"] as? String, "running")
+        XCTAssertEqual(running["endsAt"] as? Double, t0.addingTimeInterval(1500).timeIntervalSince1970)
+        XCTAssertEqual(running["remaining"] as? Double, 1400)
+        XCTAssertEqual(running["duration"] as? Double, 1500)
+        f.toggle(at: t0.addingTimeInterval(300))
+        let paused = FocusBroadcast.payload(f, now: t0.addingTimeInterval(400))
+        XCTAssertEqual(paused["state"] as? String, "paused")
+        XCTAssertEqual(paused["remaining"] as? Double, 1200)
+        f.toggle(at: t0.addingTimeInterval(400))
+        _ = f.tick(at: t0.addingTimeInterval(1700))
+        let done = FocusBroadcast.payload(f, now: t0.addingTimeInterval(1700))
+        XCTAssertEqual(done["state"] as? String, "finished")
+        XCTAssertEqual(done["finishedAt"] as? Double, t0.addingTimeInterval(1600).timeIntervalSince1970)
+    }
 }
 
 final class WeatherTests: XCTestCase {
