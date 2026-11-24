@@ -4,12 +4,14 @@ A slim drawer that lives on the top-left edge of your Mac's screen (design: "Amb
 
 - **Hidden:** a small tab showing Brunei (BWN) and London (LDN) time either side of a status dot.
   The dot is amber when all is well and turns coral when something needs you
-  (low battery, nearly full disk, running hot, memory full, working hard, focus session done).
-- **Revealed:** move the pointer onto the tab and the drawer slides out: a live pulse line of how
-  busy the Mac is, the date and Bandar Seri Begawan weather, CPU, memory, battery, free disk,
-  network speed, temperature and fan, a month calendar (today ringed in amber, a dot under days
-  with events, arrows to see other months; click the month name to come back), your next calendar
-  event, and a 25-minute focus timer.
+  (low battery on the Mac or a Bluetooth device, nearly full disk, running hot, memory full, working hard, focus session done).
+- **Revealed:** move the pointer onto the tab and the drawer slides out: the date and Bandar Seri
+  Begawan weather, CPU, memory, free disk, network speed, temperature and fan, a month calendar
+  (today ringed in amber, a dot under days with events, arrows to see other months; click the
+  month name to come back), your next calendar event, a 25-minute focus timer, and battery rings
+  for this Mac and connected Bluetooth devices (Magic Mouse, Keyboard, Trackpad, AirPods, Beats).
+  A ring turns coral at 20% or less, and so does the dot. Hover an AirPods ring for left, right
+  and case. iPhone and Apple Watch aren't shown: a Mac app can't read them reliably.
   Move away and it tucks back in. To keep it open, right-click it and choose Pin Drawer Open (choose Unpin Drawer to let it tuck away again). It sits on the desktop behind your windows; right-click and choose Always on Top to keep it in front of everything.
 - **Right-click** for: start, pause or reset the focus timer, Pin Drawer Open, Always on Top
   (also above full-screen apps), Clear Glass (macOS 26: see-through like the Dock instead of

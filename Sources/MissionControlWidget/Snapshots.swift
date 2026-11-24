@@ -59,7 +59,7 @@ enum Snapshots {
         // Same scene when something needs attention (low battery), to check the coral state.
         let alert = DashboardModel.demo()
         alert.battery = BatteryReading(level: 0.12, charging: false, onPower: false)
-        alert.recomputeStatus()
+        alert.rebuildDevices()
         try save(Pair(model: alert), to: dir.appendingPathComponent("3-attention-low-battery.png"))
 
         // A Mac with no battery, no fan, no calendar access and no weather yet.
@@ -72,8 +72,14 @@ enum Snapshots {
         bare.eventDays = []
         bare.weather = nil
         bare.focus = FocusTimer()
-        bare.recomputeStatus()
+        bare.clearAccessoriesForSnapshot()
+        bare.rebuildDevices()
         try save(Pair(model: bare), to: dir.appendingPathComponent("4-desktop-mac-no-extras.png"))
+
+        // A Bluetooth mouse running low: coral ring, coral dot and the warning under the date.
+        let mouse = DashboardModel.demo()
+        mouse.setMouseLevelForSnapshot(0.12)
+        try save(Pair(model: mouse), to: dir.appendingPathComponent("6-mouse-battery-low.png"))
 
         // The Clear Glass option, over a real-looking backdrop.
         Dusk.snapshotClear = true

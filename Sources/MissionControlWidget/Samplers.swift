@@ -138,3 +138,82 @@ enum ThermalSampler {
         }
     }
 }
+
+/// Bluetooth accessories' batteries.
+/// Magic Mouse, Keyboard and Trackpad come from the IOKit registry: cheap, read every 30 seconds.
+/// AirPods and Beats only appear in System Information, so `system_profiler` is run in the background,
+/// at most every 2 minutes (every 30 seconds while the drawer is open), and never while the screens sleep.
+enum AccessorySampler {
+    /// Registry classes that carry a BatteryPercent for Apple's Bluetooth accessories (newer macOS first).
+    private static let classes = ["AppleDeviceManagementHIDEventService", "AppleHSBluetoothDevice", "IOBluetoothHIDDriver"]
+
+    static func readRegistry() -> [DeviceBattery] {
+        var out: [DeviceBattery] = []
+        for cls in classes {
+            var iterator: io_iterator_t = 0
+            guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(cls), &iterator) == KERN_SUCCESS else { continue }
+            defer { IOObjectRelease(iterator) }
+            var service = IOIteratorNext(iterator)
+            while service != 0 {
+                defer {
+                    IOObjectRelease(service)
+                    service = IOIteratorNext(iterator)
+                }
+                // Ask for just the two values needed, and only look for a name when there is a battery.
+                guard let pct = IORegistryEntryCreateCFProperty(service, "BatteryPercent" as CFString, kCFAllocatorDefault, 0)?
+                        .takeRetainedValue(),
+                      let product = IORegistryEntryCreateCFProperty(service, "Product" as CFString, kCFAllocatorDefault, 0)?
+                        .takeRetainedValue() else { continue }
+                let props: [String: Any] = ["Product": product, "BatteryPercent": pct]
+                if let d = BatteryRules.fromRegistry(props) { out.append(d) }
+            }
+        }
+        return out
+    }
+
+    private static let queue = DispatchQueue(label: "missioncontrol.bluetooth", qos: .utility)
+    @MainActor private static var running = false
+
+    /// Runs `system_profiler` off the main thread and hands back the devices on the main thread.
+    /// Returns nil (keep what you had) if it fails or takes longer than 15 seconds.
+    @MainActor static func readProfiler(_ done: @escaping @MainActor ([DeviceBattery]?) -> Void) {
+        guard !running else { return }
+        running = true
+        queue.async {
+            let result = runProfiler()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    running = false
+                    done(result)
+                }
+            }
+        }
+    }
+
+    private static func runProfiler() -> [DeviceBattery]? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        p.arguments = ["SPBluetoothDataType", "-json"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        // Read while it runs, so a large answer can't fill the pipe and stall it.
+        final class Box: @unchecked Sendable { var data = Data() }
+        let box = Box()
+        let reader = DispatchGroup()
+        reader.enter()
+        DispatchQueue.global(qos: .utility).async {
+            box.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            reader.leave()
+        }
+        if reader.wait(timeout: .now() + 15) == .timedOut {
+            p.terminate()
+            if reader.wait(timeout: .now() + 2) == .success { p.waitUntilExit() }
+            return nil
+        }
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        return BatteryRules.parseProfiler(box.data)
+    }
+}

@@ -4,8 +4,10 @@ import MissionCore
 
 /// "Liquid Glass" colours: white text on real macOS glass, with amber kept for London time, the dot and the timer.
 enum Dusk {
-    static let amber = Color(red: 1.0, green: 0.79, blue: 0.44)          // #FFC970
-    static let amberDim = Color(red: 0.94, green: 0.76, blue: 0.48)      // #F0C27A
+    /// The theme's highlight (Amber Dusk: #FFC970). Follows right-click > Theme.
+    static var amber: Color { ThemeLive.shared.accent }
+    /// Its softer partner (Amber Dusk: #F0C27A).
+    static var amberDim: Color { ThemeLive.shared.accentDim }
     static let coral = Color(red: 1.0, green: 0.42, blue: 0.37)          // #FF6B5E
     static let pulse = Color.white
     static let edge = Color.white.opacity(0.16)
@@ -250,44 +252,6 @@ struct DrawerHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// The live heartbeat line with a bright light running along it. Taller beats when the Mac is busier.
-struct PulseLine: View {
-    var load: Double
-    var animate = true
-    var fixedPhase: Double = 0.35
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let moving = animate && !reduceMotion
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !moving)) { context in
-            Canvas { ctx, size in
-                let pts = Pulse.heartbeat(width: size.width, height: size.height, load: load)
-                var path = Path()
-                for (i, p) in pts.enumerated() {
-                    let cg = CGPoint(x: p.x, y: p.y)
-                    if i == 0 { path.move(to: cg) } else { path.addLine(to: cg) }
-                }
-                var base = Path()
-                base.move(to: CGPoint(x: 0, y: size.height * 0.6))
-                base.addLine(to: CGPoint(x: size.width, y: size.height * 0.6))
-                ctx.stroke(base, with: .color(Dusk.hairline), lineWidth: 1)
-                ctx.stroke(path, with: .color(Dusk.pulse.opacity(0.35)), lineWidth: 1.3)
-
-                let period = 3.2
-                let t = moving ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period : fixedPhase
-                let total = size.width * 2.1
-                let dash: [CGFloat] = [60, total]
-                let style = StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round, dash: dash, dashPhase: -CGFloat(t) * total + 60)
-                var glow = ctx
-                glow.addFilter(.shadow(color: Dusk.pulse.opacity(0.9), radius: 4))
-                glow.stroke(path, with: .color(Dusk.pulse), style: style)
-            }
-        }
-        .frame(height: 80)
-        .accessibilityHidden(true)
-    }
-}
-
 struct StatRow: View {
     var label: String
     var value: String
@@ -324,7 +288,6 @@ struct DrawerPanelView: View {
         VStack(alignment: .leading, spacing: 20) {
             header
             VStack(alignment: .leading, spacing: 10) {
-                PulseLine(load: model.cpu ?? 0, animate: animate)
                 HStack(alignment: .firstTextBaseline) {
                     Text(Format.longDate(model.now, timeZone: model.homeZone))
                         .font(.system(size: 13)).foregroundStyle(Dusk.value)
@@ -344,7 +307,6 @@ struct DrawerPanelView: View {
             VStack(spacing: 10) {
                 StatRow(label: "CPU", value: model.cpu.map(Format.percent) ?? "—")
                 StatRow(label: "Memory", value: model.memory.map(Format.percent) ?? "—")
-                if let b = model.batteryLine { StatRow(label: "Battery", value: b) }
                 StatRow(label: "Disk free", value: model.disk.map { Format.gigabytes($0.free) } ?? "—")
                 StatRow(label: "Network", value: model.network.map(Format.network) ?? "—")
                 StatRow(label: "Temperature", value: model.temperatureLine)
@@ -386,6 +348,10 @@ struct DrawerPanelView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Focus timer, \(Format.countdown(model.focus.remaining(at: model.now))) \(model.focus.caption(at: model.now))")
                 .accessibilityHint(model.focus.isRunning ? "Pauses the timer" : "Starts the timer")
+            }
+            if !model.devices.isEmpty {
+                Divider().overlay(Dusk.hairline)
+                BatteryRings(devices: model.devices)
             }
         }
         .padding(.horizontal, 24)
@@ -517,6 +483,81 @@ struct DayCell: View {
     }
 }
 
+/// Battery rings for this Mac and connected Bluetooth devices, at the bottom of the drawer.
+/// White ring normally, the theme colour while charging, coral at 20% or less.
+struct BatteryRings: View {
+    var devices: [DeviceBattery]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Batteries")
+            // Fixed-width cells from the left, so one or two rings line up under the label (five still fit).
+            HStack(spacing: 0) {
+                ForEach(devices) { d in
+                    BatteryRing(device: d)
+                        .frame(width: 50)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+struct BatteryRing: View {
+    var device: DeviceBattery
+
+    var body: some View {
+        let colour = device.isLow ? Dusk.coral : (device.charging ? Dusk.amber : Dusk.value)
+        VStack(spacing: 5) {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.16), lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: max(0.02, device.level))
+                    .stroke(colour, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: Self.symbol(device))
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(device.isLow ? Dusk.coral : Dusk.text)
+                if device.charging {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Dusk.amber)
+                        .offset(y: 12)
+                }
+            }
+            .frame(width: 40, height: 40)
+            Text(Format.percent(device.level))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(device.isLow ? Dusk.coral : Dusk.value)
+            Text(device.kind.shortName.uppercased())
+                .font(.system(size: 9))
+                .tracking(1)
+                .foregroundStyle(device.isLow ? Dusk.coral : Dusk.faint)
+                .lineLimit(1)
+        }
+        .duskTextShadow()
+        .help(device.detail)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(device.detail + (device.isLow ? ", low" : ""))
+    }
+
+    /// SF Symbols for each kind of device.
+    static func symbol(_ device: DeviceBattery) -> String {
+        switch device.kind {
+        case .mac: return "laptopcomputer"
+        case .headphones:
+            let n = device.name.lowercased()
+            if n.contains("airpods pro") { return "airpodspro" }
+            if n.contains("airpods max") { return "airpodsmax" }
+            return n.contains("airpods") ? "airpods" : "headphones"
+        case .mouse: return "magicmouse"
+        case .keyboard: return "keyboard"
+        case .trackpad: return "rectangle.and.hand.point.up.left"
+        case .other: return "battery.75percent"
+        }
+    }
+}
+
 /// What the panel shows: the tab, or the drawer sliding out over it.
 struct RootView: View {
     @ObservedObject var model: DashboardModel
@@ -539,6 +580,7 @@ struct RootView: View {
         .onAppear { loginOn = LoginItem.isOn }
         .onChange(of: drawer.showDrawer) {
             loginOn = LoginItem.isOn
+            model.drawerOpen = drawer.showDrawer
             // Tucking the drawer away brings the calendar back to this month for next time.
             // Waits for the slide-out to finish, so the grid doesn't change shape mid-animation.
             if !drawer.showDrawer, model.monthOffset != 0 {
@@ -559,6 +601,7 @@ struct RootView: View {
             if #available(macOS 26.0, *) {
                 Toggle("Clear Glass", isOn: $clearGlass)
             }
+            ThemeMenu()
             Button("Refresh Weather and Calendar") {
                 model.refreshWeather()
                 model.refreshEvent()
